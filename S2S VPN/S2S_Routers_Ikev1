@@ -1,0 +1,383 @@
+********************************************************************************************
+La siguiente práctica tiene como objetivo Site to Site VPN usando 2 Routers CSRV1k con IKEv1
+by Fer Gutierrez
+SageITraining - Certificarse hace la diferencia
+********************************************************************************************
+
+
+================
+PCs configuration
+================
+sudo hostname HQPC
+sudo ifconfig eth0 10.1.1.2 netmask 255.255.255.0
+sudo route add default gw 10.1.1.1 eth0
+ifconfig -a
+
+sudo hostname PCExt
+sudo ifconfig eth0 10.2.2.2 netmask 255.255.255.0
+sudo route add default gw 10.2.2.1 eth0
+ifconfig -a
+
+sudo hostname BranchPC
+sudo ifconfig eth0 172.16.2.2 netmask 255.255.255.0
+sudo route add default gw 172.16.2.1 eth0
+ifconfig -a
+
+sudo hostname BranchExt
+sudo ifconfig eth0 172.16.3.2 netmask 255.255.255.0
+sudo route add default gw 172.16.3.1 eth0
+ifconfig -a
+
+======================
+Routers configuration:
+======================
+-----------------
+Router1:
+-----------------
+hostname CDMX
+!
+interface GigabitEthernet1
+ ip address 172.16.1.1 255.255.255.0
+ no shut
+!
+interface GigabitEthernet2
+ ip address 10.1.1.1 255.255.255.0
+ no shut
+!
+interface GigabitEthernet3
+ ip address 10.2.2.1 255.255.255.0
+ no shut
+!
+router eigrp 2
+ network 10.1.1.0 0.0.0.255
+ network 10.2.2.0 0.0.0.255
+ network 172.16.1.0 0.0.0.255
+ !
+
+
+------------
+ISP
+------------
+hostname ISP
+!
+interface GigabitEthernet1
+ ip address 172.16.1.2 255.255.255.0
+ no shut
+!
+interface GigabitEthernet2
+ ip address 10.0.0.1 255.255.255.0
+ no shut
+!
+router eigrp 2
+ network 10.0.0.0 0.0.0.255
+ network 172.16.1.0 0.0.0.255
+!
+
+-------
+Router2
+-------
+hostname MTY
+!
+interface GigabitEthernet1
+ ip address 172.16.2.1 255.255.255.0
+ no shut
+!
+interface GigabitEthernet2
+ ip address 10.0.0.2 255.255.255.0
+ no shut
+!
+interface GigabitEthernet3
+ ip address 172.16.3.1 255.255.255.0
+ no shut
+!
+router eigrp 2
+ network 172.16.3.1 0.0.0.255
+ network 10.0.0.0 0.0.0.255
+ network 172.16.2.0 0.0.0.255
+ !
+
+
+==============
+Verification 1
+==============
+
+Trace from HQPC to BranchPC(traffic should go through normal eigrp route)
+traceroute 172.16.2.2
+
+Trace from PCExt to BranchExt (traffic should go through normal eigrp route)
+traceroute 172.16.3.2
+
+
+
+===================================
+IKEv1 VPN configuration 
+===================================
+
+-------
+CDMX
+-------
+
+!--- Create an ISAKMP policy for Phase 1 negotiations for the L2L tunnels.
+!---default lifetime is 86400 mins
+
+crypto isakmp policy 10
+encryption aes
+hash sha256
+authentication pre-share
+group 14
+
+!--- Specify the pre-shared key and the remote peer address 
+!--- to match for the L2L tunnel.
+
+crypto isakmp key SageIT address 10.0.0.2
+
+!--- Create the Phase 2 policy for IPsec negotiation.
+
+crypto ipsec transform-set myset esp-aes esp-sha256-hmac
+
+!--- Create an ACL for the traffic to be encrypted.
+!--- In this example, the traffic from 10.1.1.0/24 to 172.16.2.0/24
+!--- is encrypted. The rest of traffic will be outside of the tunnel 
+
+access-list 100 permit ip 10.1.1.0 0.0.0.255 172.16.2.0 0.0.0.255
+
+!--- Create the actual crypto map. Specify an access control list (ACL),
+!--- which defines the proxy identities (local and remote host/networks).
+
+crypto map mymap 10 ipsec-isakmp
+ set peer 10.0.0.2
+ set transform-set myset
+ match address 100
+!
+
+!--- Apply the crypto map on the outside interface.
+
+interface GigabitEthernet1
+crypto map mymap
+
+
+
+-------
+MTY
+-------
+
+!--- Create an ISAKMP policy for Phase 1 negotiations for the L2L tunnels.
+
+crypto isakmp policy 10
+encryption aes
+hash sha256
+authentication pre-share
+group 14
+
+!--- Specify the pre-shared key and the remote peer address 
+!--- to match for the L2L tunnel.
+
+crypto isakmp key SageIT address 172.16.1.1
+
+!--- Create the Phase 2 policy for IPsec negotiation.
+
+crypto ipsec transform-set myset esp-aes esp-sha256-hmac
+
+!--- Create an ACL for the traffic to be encrypted.
+!--- In this example, the traffic from 172.16.2.0/24 to 10.1.1.0/24
+!--- is encrypted. The traffic which does not match the access list 
+!--- is unencrypted for the Internet.
+
+access-list 100 permit ip 172.16.2.0 0.0.0.255 10.1.1.0 0.0.0.255
+
+!--- Create the actual crypto map. Specify an access control list (ACL),
+!--- which defines the proxy identities (local and remote host/networks).
+
+!
+crypto map mymap 10 ipsec-isakmp
+ set peer 172.16.1.1
+ set transform-set myset
+ match address 100
+!
+!--- Apply the crypto map on the outside interface.
+
+interface GigabitEthernet2
+crypto map mymap
+
+
+=============
+Verification 4
+=============
+
+Step 1: execute show crypto ipsec sa (you should see 0 encaps/decaps in Router1 and Router2)
+Step 2: Trace from PC1 to PC2 (traffic should go through the tunnel)
+traceroute 172.16.2.2
+Step 3: Execute show crypto ipsec sa (you should see encaps/decaps in Router1 and Router2)
+Step 4: Trace from PCExt to BranchExt (traffic should go through the tunnel)
+traceroute 172.16.3.2
+Step 5:Execute show crypto ipsec sa (you should NOT see encaps/decaps in Router1 and Router2)
+
+
+Troubleshooting commands:
+General commands:
+
+show crypto isakmp sa
+show crypto ipsec sa
+show run | inc ipsec
+show run | inc isakmp
+
+IPSEC:
+debug crypto isakmp 
+debug crypto ipsec
+
+
+Common errors:
+
+Mismatch on isakmp key; This occurs when both routers have different pre-share key under "crypto isakmp key SageIT address 172.16.1.1" command
+
+Error seen:
+%CRYPTO-4-IKMP_BAD_MESSAGE: IKE message from 172.16.1.1 failed its sanity check or is malformed
+
+dst             src             state          conn-id status
+10.0.0.2        172.16.1.1      MM_KEY_EXCH       1004 ACTIVE
+10.0.0.2        172.16.1.1      MM_NO_STATE       1003 ACTIVE (deleted)
+
+CDMX#
+*Jun  8 12:13:50.010: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:13:50.010: ISAKMP: (1001):: incrementing error counter on sa, attempt 3 of 5: retransmit phase 1
+*Jun  8 12:13:50.010: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH
+*Jun  8 12:13:50.010: ISAKMP-PAK: (1001):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:13:50.011: ISAKMP: (1001):Sending an IKE IPv4 Packet.
+*Jun  8 12:13:50.013: ISAKMP-PAK: (1001):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_KEY_EXCH
+*Jun  8 12:13:50.013: ISAKMP: (1001):phase 1 packet is a duplicate of a previous packet.
+*Jun  8 12:13:50.013: ISAKMP: (1001):retransmission skipped for phase 1 (time since last transmission 2)
+*Jun  8 12:13:58.334: ISAKMP: (1001):set new node 0 to QM_IDLE      
+*Jun  8 12:13:58.334: ISAKMP-ERROR: (1001):SA is still budding. Attached new ipsec request to it. (local 172.16.1.1, remote 10.0.0.2)
+*Jun  8 12:13:58.335: ISAKMP-ERROR: (0):Error while processing SA request: Failed to initialize SA
+*Jun  8 12:13:58.335: ISAKMP-ERROR: (0):Error while processing KMI message 0, error 2.
+*Jun  8 12:14:00.011: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:14:00.011: ISAKMP: (1001):: incrementing error counter on sa, attempt 4 of 5: retransmit phase 1
+*Jun  8 12:14:00.011: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH
+*Jun  8 12:14:00.011: ISAKMP-PAK: (1001):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:14:00.011: ISAKMP: (1001):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:00.014: ISAKMP-PAK: (1001):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_KEY_EXCH
+*Jun  8 12:14:00.014: ISAKMP: (1001):phase 1 packet is a duplicate of a previous packet.
+*Jun  8 12:14:00.014: ISAKMP: (1001):retransmission skipped for phase 1 (time since last transmission 2)
+*Jun  8 12:14:10.012: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:14:10.012: ISAKMP: (1001):: incrementing error counter on sa, attempt 5 of 5: retransmit phase 1
+*Jun  8 12:14:10.013: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH
+*Jun  8 12:14:10.013: ISAKMP-PAK: (1001):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:14:10.013: ISAKMP: (1001):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:20.013: ISAKMP: (1001):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:14:20.013: ISAKMP: (1001):peer does not do paranoid keepalives.
+*Jun  8 12:14:20.013: ISAKMP-ERROR: (1001):deleting SA reason "Death by retransmission P1" state (I) MM_KEY_EXCH (peer 10.0.0.2)
+*Jun  8 12:14:20.013: ISAKMP-ERROR: (1001):deleting SA reason "Death by retransmission P1" state (I) MM_KEY_EXCH (peer 10.0.0.2) 
+*Jun  8 12:14:20.013: ISAKMP: (0):Unlocking peer struct 0x80007FEC4190F798 for isadb_mark_sa_deleted(), count 0
+*Jun  8 12:14:20.013: ISAKMP: (0):Deleting peer node by peer_reap for 10.0.0.2: 80007FEC4190F798
+*Jun  8 12:14:20.020: ISAKMP: (1001):deleting node 2298711964 error FALSE reason "IKE deleted"
+*Jun  8 12:14:20.020: ISAKMP: (1001):deleting node 2381822054 error FALSE reason "IKE deleted"
+*Jun  8 12:14:20.020: ISAKMP: (1001):Input = IKE_MESG_INTERNAL, IKE_PHASE1_DEL
+*Jun  8 12:14:20.020: ISAKMP: (1001):Old State = IKE_I_MM5  New State = IKE_DEST_SA 
+*Jun  8 12:14:28.482: ISAKMP: (0):SA request profile is (NULL)
+*Jun  8 12:14:28.483: ISAKMP: (0):Created a peer struct for 10.0.0.2, peer port 500
+*Jun  8 12:14:28.483: ISAKMP: (0):New peer created peer = 0x80007FEC4190F798 peer_handle = 0x8000000040000003
+*Jun  8 12:14:28.483: ISAKMP: (0):Locking peer struct 0x80007FEC4190F798, refcount 1 for isakmp_initiator
+*Jun  8 12:14:28.483: ISAKMP: (0):local port 500, remote port 500
+*Jun  8 12:14:28.483: ISAKMP: (0):set new node 0 to QM_IDLE      
+*Jun  8 12:14:28.483: ISAKMP: (0):Find a dup sa in the avl tree during calling isadb_insert sa = 80007FEC3F4F7F90
+*Jun  8 12:14:28.483: ISAKMP: (0):Can not start Aggressive mode, trying Main mode.
+*Jun  8 12:14:28.483: ISAKMP: (0):found peer pre-shared key matching 10.0.0.2
+*Jun  8 12:14:28.483: ISAKMP: (0):constructed NAT-T vendor-rfc3947 ID
+*Jun  8 12:14:28.483: ISAKMP: (0):constructed NAT-T vendor-07 ID
+*Jun  8 12:14:28.483: ISAKMP: (0):constructed NAT-T vendor-03 ID
+*Jun  8 12:14:28.483: ISAKMP: (0):constructed NAT-T vendor-02 ID
+*Jun  8 12:14:28.484: ISAKMP: (0):Input = IKE_MESG_FROM_IPSEC, IKE_SA_REQ_MM
+*Jun  8 12:14:28.484: ISAKMP: (0):Old State = IKE_READY  New State = IKE_I_MM1 
+*Jun  8 12:14:28.484: ISAKMP: (0):beginning Main Mode exchange
+*Jun  8 12:14:28.484: ISAKMP-PAK: (0):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_NO_STATE
+*Jun  8 12:14:28.484: ISAKMP: (0):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:28.500: ISAKMP-PAK: (0):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_NO_STATE
+*Jun  8 12:14:28.500: ISAKMP: (0):Input = IKE_MESG_FROM_PEER, IKE_MM_EXCH
+*Jun  8 12:14:28.500: ISAKMP: (0):Old State = IKE_I_MM1  New State = IKE_I_MM2 
+*Jun  8 12:14:28.501: ISAKMP: (0):processing SA payload. message ID = 0
+*Jun  8 12:14:28.501: ISAKMP: (0):processing vendor id payload
+*Jun  8 12:14:28.501: ISAKMP: (0):vendor ID seems Unity/DPD but major 69 mismatch
+*Jun  8 12:14:28.501: ISAKMP: (0):vendor ID is NAT-T RFC 3947
+*Jun  8 12:14:28.501: ISAKMP: (0):found peer pre-shared key matching 10.0.0.2
+*Jun  8 12:14:28.501: ISAKMP: (0):local preshared key found
+*Jun  8 12:14:28.501: ISAKMP: (0):Scanning profiles for xauth ...
+*Jun  8 12:14:28.501: ISAKMP: (0):Checking ISAKMP transform 1 against priority 10 policy
+*Jun  8 12:14:28.501: ISAKMP: (0):      encryption AES-CBC
+*Jun  8 12:14:28.501: ISAKMP: (0):      keylength of 128
+*Jun  8 12:14:28.501: ISAKMP: (0):      hash SHA256
+*Jun  8 12:14:28.501: ISAKMP: (0):      default group 14
+*Jun  8 12:14:28.501: ISAKMP: (0):      auth pre-share
+*Jun  8 12:14:28.501: ISAKMP: (0):      life type in seconds
+*Jun  8 12:14:28.501: ISAKMP:      life duration (VPI) of  0x0 0x1 0x51 0x80 
+*Jun  8 12:14:28.501: ISAKMP: (0):atts are acceptable. Next payload is 0
+*Jun  8 12:14:28.501: ISAKMP: (0):Acceptable atts:actual life: 0
+*Jun  8 12:14:28.502: ISAKMP: (0):Acceptable atts:life: 0
+*Jun  8 12:14:28.502: ISAKMP: (0):Fill atts in sa vpi_length:4
+*Jun  8 12:14:28.502: ISAKMP: (0):Fill atts in sa life_in_seconds:86400
+*Jun  8 12:14:28.502: ISAKMP: (0):Returning Actual lifetime: 86400
+*Jun  8 12:14:28.502: ISAKMP: (0):Started lifetime timer: 86400.
+*Jun  8 12:14:28.502: ISAKMP: (0):processing vendor id payload
+*Jun  8 12:14:28.502: ISAKMP: (0):vendor ID seems Unity/DPD but major 69 mismatch
+*Jun  8 12:14:28.502: ISAKMP: (0):vendor ID is NAT-T RFC 3947
+*Jun  8 12:14:28.502: ISAKMP: (0):Input = IKE_MESG_INTERNAL, IKE_PROCESS_MAIN_MODE
+*Jun  8 12:14:28.502: ISAKMP: (0):Old State = IKE_I_MM2  New State = IKE_I_MM2 
+*Jun  8 12:14:28.503: ISAKMP-PAK: (0):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_SA_SETUP
+*Jun  8 12:14:28.503: ISAKMP: (0):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:28.503: ISAKMP: (0):Input = IKE_MESG_INTERNAL, IKE_PROCESS_COMPLETE
+*Jun  8 12:14:28.503: ISAKMP: (0):Old State = IKE_I_MM2  New State = IKE_I_MM3 
+*Jun  8 12:14:28.528: ISAKMP-PAK: (0):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_SA_SETUP
+*Jun  8 12:14:28.529: ISAKMP: (0):Input = IKE_MESG_FROM_PEER, IKE_MM_EXCH
+*Jun  8 12:14:28.529: ISAKMP: (0):Old State = IKE_I_MM3  New State = IKE_I_MM4 
+*Jun  8 12:14:28.529: ISAKMP: (0):processing KE payload. message ID = 0
+*Jun  8 12:14:28.543: ISAKMP: (0):processing NONCE payload. message ID = 0
+*Jun  8 12:14:28.543: ISAKMP: (0):found peer pre-shared key matching 10.0.0.2
+*Jun  8 12:14:28.543: ISAKMP: (1002):processing vendor id payload
+*Jun  8 12:14:28.543: ISAKMP: (1002):vendor ID is Unity
+*Jun  8 12:14:28.543: ISAKMP: (1002):processing vendor id payload
+*Jun  8 12:14:28.543: ISAKMP: (1002):vendor ID is DPD
+*Jun  8 12:14:28.543: ISAKMP: (1002):processing vendor id payload
+*Jun  8 12:14:28.543: ISAKMP: (1002):speaking to another IOS box!
+*Jun  8 12:14:28.543: ISAKMP: (1002):received payload type 20
+*Jun  8 12:14:28.543: ISAKMP: (1002):His hash no match - this node outside NAT
+*Jun  8 12:14:28.543: ISAKMP: (1002):received payload type 20
+*Jun  8 12:14:28.543: ISAKMP: (1002):No NAT Found for self or peer
+*Jun  8 12:14:28.543: ISAKMP: (1002):Input = IKE_MESG_INTERNAL, IKE_PROCESS_MAIN_MODE
+*Jun  8 12:14:28.543: ISAKMP: (1002):Old State = IKE_I_MM4  New State = IKE_I_MM4 
+
+*Jun  8 12:14:28.543: ISAKMP: (1002):Send initial contact
+*Jun  8 12:14:28.543: ISAKMP: (1002):SA is doing 
+*Jun  8 12:14:28.543: ISAKMP: (1002):pre-shared key authentication using id type ID_IPV4_ADDR
+*Jun  8 12:14:28.543: ISAKMP: (1002):ID payload 
+        next-payload : 8
+        type         : 1
+*Jun  8 12:14:28.543: ISAKMP: (1002):   address      : 172.16.1.1
+*Jun  8 12:14:28.543: ISAKMP: (1002):   protocol     : 17 
+        port         : 500 
+        length       : 12
+*Jun  8 12:14:28.543: ISAKMP: (1002):Total payload length: 12
+*Jun  8 12:14:28.544: ISAKMP-PAK: (1002):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:14:28.544: ISAKMP: (1002):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:28.544: ISAKMP: (1002):Input = IKE_MESG_INTERNAL, IKE_PROCESS_COMPLETE
+*Jun  8 12:14:28.544: ISAKMP: (1002):Old State = IKE_I_MM4  New State = IKE_I_MM5 
+
+*Jun  8 12:14:29.548: ISAKMP-PAK: (1002):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_KEY_EXCH
+*Jun  8 12:14:29.548: ISAKMP: (1002):phase 1 packet is a duplicate of a previous packet.
+*Jun  8 12:14:29.548: ISAKMP: (1002):retransmitting due to retransmit phase 1
+*Jun  8 12:14:30.048: ISAKMP: (1002):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:14:30.048: ISAKMP: (1002):: incrementing error counter on sa, attempt 1 of 5: retransmit phase 1
+*Jun  8 12:14:30.048: ISAKMP: (1002):retransmitting phase 1 MM_KEY_EXCH
+*Jun  8 12:14:30.048: ISAKMP-PAK: (1002):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:14:30.048: ISAKMP: (1002):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:40.049: ISAKMP: (1002):retransmitting phase 1 MM_KEY_EXCH...
+*Jun  8 12:14:40.049: ISAKMP: (1002):: incrementing error counter on sa, attempt 2 of 5: retransmit phase 1
+*Jun  8 12:14:40.049: ISAKMP: (1002):retransmitting phase 1 MM_KEY_EXCH
+*Jun  8 12:14:40.049: ISAKMP-PAK: (1002):sending packet to 10.0.0.2 my_port 500 peer_port 500 (I) MM_KEY_EXCH
+*Jun  8 12:14:40.049: ISAKMP: (1002):Sending an IKE IPv4 Packet.
+*Jun  8 12:14:40.051: ISAKMP-PAK: (1002):received packet from 10.0.0.2 dport 500 sport 500 Global (I) MM_KEY_EXCH
+*Jun  8 12:14:40.051: ISAKMP: (1002):phase 1 packet is a duplicate of a previous packet.
+*Jun  8 12:14:40.051: ISAKMP: (1002):retransmission skipped for phase 1 (time since last transmission 1)un all
+
+
+
+
+
