@@ -1,0 +1,140 @@
+********************************************************************************************
+La siguiente práctica tiene como objetivo configurar Site to Site VPN en Ikev2 usando ASAs
+by Fer Gutierrez
+SageITraining - Certificarse hace la diferencia
+********************************************************************************************
+
+
+================
+PCs configuration
+================
+sudo hostname InternalPC
+sudo ifconfig eth0 192.168.10.10 netmask 255.255.255.0
+sudo route add default gw 192.168.10.1 eth0
+ifconfig -a
+
+sudo hostname ExternalPC
+sudo ifconfig eth0 192.168.20.20 netmask 255.255.255.0
+sudo route add default gw 192.168.20.1 eth0
+ifconfig -a
+
+
+======================
+ASA configuration:
+======================
+-----------------
+ASA1 Routing 
+-----------------
+config t
+hostname ASA1
+!
+Interface G0/0
+nameif outside
+ip address 172.16.1.1 255.255.255.0
+no shut
+!
+Interface gi0/1
+nameif inside
+ip address 192.168.10.1 255.255.255.0
+no shut
+!
+route outside 192.168.20.0 255.255.255.0 172.16.1.2
+!
+
+-----------------
+ASA1 VPN
+-----------------
+access-list VPN1 extended permit ip 192.168.10.0 255.255.255.0 192.168.20.0 255.255.255.0
+!
+!Tunnel-group 172.16.1.2 type ipsec-l2l
+Tunnel-group 172.16.1.2 ipsec-attributes
+ikev2 local-authentication pre-shared-key SageIT
+ikev2 remote-authentication pre-shared-key SageIT
+!
+crypto ikev2 policy 10
+encryption aes-256
+integrity sha256
+group 14
+prf sha256
+lifetime seconds 86400
+!
+crypto ikev2 enable outside
+!
+crypto ipsec ikev2 ipsec-proposal IPSECPRO
+protocol esp encryption aes-256
+protocol esp integrity  sha-256
+!
+crypto map mymap 10 match address VPN1
+crypto map mymap 10 set peer 172.16.1.2
+crypto map mymap 10 set ikev2 ipsec-proposal IPSECPRO
+!
+crypto map mymap interface outside
+!
+wr
+
+
+-----------------
+ASA2 Routing 
+-----------------
+config t
+hostname ASA2
+!
+Interface G0/0
+nameif outside
+ip address 172.16.1.2 255.255.255.0
+no shut
+!
+Interface gi0/1
+nameif inside
+ip address 192.168.20.1 255.255.255.0
+no shut
+!
+route outside 192.168.10.0 255.255.255.0 172.16.1.1
+!
+
+-----------------
+ASA2 VPN
+-----------------
+access-list VPN2 extended permit ip 192.168.20.0 255.255.255.0 192.168.10.0 255.255.255.0
+!
+!Tunnel-group 172.16.1.1 type ipsec-l2l
+Tunnel-group 172.16.1.1 ipsec-attributes
+ikev2 local-authentication pre-shared-key SageIT
+ikev2 remote-authentication pre-shared-key SageIT
+!
+crypto ikev2 policy 10
+encryption aes-256
+integrity sha256
+group 14
+prf sha256
+lifetime seconds 86400
+!
+crypto ikev2 enable outside
+!
+crypto ipsec ikev2 ipsec-proposal IPSECPRO
+protocol esp encryption aes-256
+protocol esp integrity  sha-256
+!
+crypto map mymap 10 match address VPN2
+crypto map mymap 10 set peer 172.16.1.1
+crypto map mymap 10 set ikev2 ipsec-proposal IPSECPRO
+!
+crypto map mymap interface outside
+!
+wr
+
+======================
+Verification
+======================
+Perform a ping from PC1 to PC2 
+
+
+
+
+
+Show commands:
+show run tunnel-group
+show run crypto map
+show crypto ikev2 sa
+show crypto ipsec sa
+show conn
