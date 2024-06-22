@@ -1,0 +1,197 @@
+********************************************************************************************
+La siguiente práctica tiene como objetivo configurar GETVPN usando routers CSRv1k
+by Fer Gutierrez
+SageITraining - Certificarse hace la diferencia
+********************************************************************************************
+
+================
+PCs configuration
+================
+sudo hostname PC1
+sudo ifconfig eth0 10.1.2.2 netmask 255.255.255.0
+sudo route add default gw 10.1.2.1 eth0
+ifconfig -a
+
+sudo hostname PC2
+sudo ifconfig eth0 10.1.3.2 netmask 255.255.255.0
+sudo route add default gw 10.1.3.1 eth0
+ifconfig -a
+
+
+
+
+=======================
+KeyServer configuration:
+=======================
+
+config t
+hostname KS
+!
+Interface Gi1
+ip address 192.168.1.2 255.255.255.0
+no shut
+!
+ip route 0.0.0.0 0.0.0.0 192.168.1.3
+!
+crypto isakmp policy 100
+encryption aes 256
+authentication pre-share
+lifetime 86400
+group 14
+!
+crypto isakmp key 0 SageIT address 0.0.0.0 0.0.0.0
+crypto ipsec transform-set TRANS esp-aes 256 esp-sha-hmac
+!
+crypto ipsec profile IPSEC
+set transform-set TRANS
+!
+crypto key generate rsa label VPNK mod 1024 exportable
+!
+ip access-list extended GETVPN-ACL
+permit ip 10.0.0.0 0.255.255.255 10.0.0.0 0.255.255.255
+!
+crypto gdoi group GDOI
+identity number 2024
+server local
+!rekey aes 256
+rekey lifetime second 3600
+rekey authentication mypubkey rsa VPNK
+rekey transport unicast
+sa ipsec 10
+profile IPSEC
+match address ipv4 GETVPN-ACL
+!
+address ipv4 192.168.1.2
+!
+crypto map CRYPTO 10 gdoi
+set group GDOI
+!
+Interface Gi1
+crypto map CRYPTO
+!
+
+
+!!!crypto map CRYPTO local-address GigabitEthernet 1
+
+
+
+
+=======================
+ISP configuration:
+=======================
+
+config t
+hostname ISP
+!
+Interface Gi3
+ip address 192.168.1.3 255.255.255.0
+no shut
+!
+Interface Gi1
+ip address 192.168.2.1 255.255.255.0
+no shut
+!
+Interface Gi2
+ip address 192.168.3.1 255.255.255.0
+no shut
+!
+ip route 10.1.3.0 255.255.255.0 192.168.3.2
+ip route 10.1.2.0 255.255.255.0 192.168.2.2
+!
+
+
+
+
+
+=======================
+GM1 configuration:
+=======================
+
+config t
+hostname GM1
+!
+Interface Gi2
+ip address 192.168.2.2 255.255.255.0
+no shut
+!
+Interface Gi1
+ip address 10.1.2.1 255.255.255.0
+no shut
+!
+ip route 0.0.0.0 0.0.0.0 192.168.2.1
+!
+crypto isakmp policy 100
+encryption aes 256
+authentication pre-share
+lifetime 86400
+group 14
+!
+crypto isakmp key 0 SageIT address 192.168.1.2
+!
+crypto gdoi group GDOI
+server address ipv4 192.168.1.2
+identity number 2024
+!
+crypto map CRYPTO 10 gdoi
+set group GDOI
+!
+Interface Gi2
+crypto map CRYPTO
+!
+
+
+
+
+=======================
+GM2 configuration:
+=======================
+
+config t
+hostname GM2
+!
+Interface Gi2
+ip address 192.168.3.2 255.255.255.0
+no shut
+!
+Interface Gi1
+ip address 10.1.3.1 255.255.255.0
+no shut
+!
+ip route 0.0.0.0 0.0.0.0 192.168.3.1
+!
+crypto isakmp policy 100
+encryption aes 256
+authentication pre-share
+lifetime 86400
+group 14
+!
+crypto isakmp key 0 SageIT address 192.168.1.2
+!
+crypto gdoi group GDOI
+server address ipv4 192.168.1.2
+identity number 2024
+!
+crypto map CRYPTO 10 gdoi
+set group GDOI
+!
+Interface Gi2
+crypto map CRYPTO
+!
+
+
+================
+Verification
+=================
+
+1. verify isakmp sa between KS and GMs
+show crypto isakmp sa on KS
+
+2. Ping from PC1 to PC2 and check crypto isakmp and ipsec
+
+
+Show commands:
+show crypto isakmp sa
+show crypto ipsec sa
+
+Documentation:
+https://www.cisco.com/c/en/us/support/docs/security/group-encrypted-transport-vpn/118125-technote-getvpn-00.html
